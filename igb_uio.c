@@ -33,6 +33,13 @@ enum rte_intr_mode {
 
 #include "compat.h"
 
+
+dma_addr_t map_dma_addr1;
+dma_addr_t map_dma_addr2;
+void *map_addr1;
+void *map_addr2;
+
+
 /**
  * A structure describing the private information for a uio device.
  */
@@ -215,6 +222,8 @@ igbuio_pci_irqhandler(int irq, void *dev_id)
 		return IRQ_NONE;
 
 	uio_event_notify(info);
+
+	printk("IRQ happend, irq = %d \r\n", irq);
 
 	/* Message signal mode, no share IRQ and automasked */
 	return IRQ_HANDLED;
@@ -478,8 +487,7 @@ static int
 igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	struct rte_uio_pci_dev *udev;
-	dma_addr_t map_dma_addr;
-	void *map_addr;
+	struct uio_info *info;
 	int err;
 
 #ifdef HAVE_PCI_IS_BRIDGE_API
@@ -493,6 +501,7 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	if (!udev)
 		return -ENOMEM;
 
+	info = &udev->info;
 	/*
 	 * enable device: ask low-level code to enable I/O and
 	 * memory
@@ -505,6 +514,40 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	/* enable bus mastering on the device */
 	pci_set_master(dev);
+
+	/*
+	 * Doing a harmless dma mapping for attaching the device to
+	 * the iommu identity mapping if kernel boots with iommu=pt.
+	 * Note this is not a problem if no IOMMU at all.
+	 */
+	map_addr1 = dma_alloc_coherent(&dev->dev, 1024, &map_dma_addr1, GFP_KERNEL);
+	if (map_addr1)
+		memset(map_addr1, 'A', 1024);
+
+	map_addr2 = dma_alloc_coherent(&dev->dev, 1024, &map_dma_addr2, GFP_KERNEL);
+	if (map_addr2)
+		memset(map_addr2, 'B', 1024);
+
+	if ((!map_addr1) || (!map_addr2))
+		dev_info(&dev->dev, "dma mapping failed\n");
+	else {
+		dev_info(&dev->dev, "mapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr1, map_addr1);
+		dev_info(&dev->dev, "mapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr2, map_addr2);
+		//dma_free_coherent(&dev->dev, 1024, map_addr, map_dma_addr);
+		//dev_info(&dev->dev, "unmapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr, map_addr);
+	}
+
+	info->mem[2].name = "DMA0";
+	info->mem[2].addr = map_addr1;
+	info->mem[2].internal_addr = NULL;
+	info->mem[2].size = 1024;
+	info->mem[2].memtype = UIO_MEM_VIRTUAL;
+
+	info->mem[3].name = "DMA1";
+	info->mem[3].addr = map_addr2;
+	info->mem[3].internal_addr = NULL;
+	info->mem[3].size = 1024;
+	info->mem[3].memtype = UIO_MEM_VIRTUAL;
 
 	/* remap IO memory */
 	err = igbuio_setup_bars(dev, &udev->info);
@@ -539,27 +582,6 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	pci_set_drvdata(dev, udev);
 
-	/*
-	 * Doing a harmless dma mapping for attaching the device to
-	 * the iommu identity mapping if kernel boots with iommu=pt.
-	 * Note this is not a problem if no IOMMU at all.
-	 */
-	map_addr = dma_alloc_coherent(&dev->dev, 1024, &map_dma_addr,
-			GFP_KERNEL);
-	if (map_addr)
-		memset(map_addr, 0, 1024);
-
-	if (!map_addr)
-		dev_info(&dev->dev, "dma mapping failed\n");
-	else {
-		dev_info(&dev->dev, "mapping 1K dma=%#llx host=%p\n",
-			 (unsigned long long)map_dma_addr, map_addr);
-
-		dma_free_coherent(&dev->dev, 1024, map_addr, map_dma_addr);
-		dev_info(&dev->dev, "unmapping 1K dma=%#llx host=%p\n",
-			 (unsigned long long)map_dma_addr, map_addr);
-	}
-
 	return 0;
 
 fail_remove_group:
@@ -577,7 +599,10 @@ static void
 igbuio_pci_remove(struct pci_dev *dev)
 {
 	struct rte_uio_pci_dev *udev = pci_get_drvdata(dev);
-
+	dma_free_coherent(&dev->dev, 1024, map_addr1, map_dma_addr1);
+	dev_info(&dev->dev, "unmapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr1, map_addr1);
+	dma_free_coherent(&dev->dev, 1024, map_addr2, map_dma_addr2);
+	dev_info(&dev->dev, "unmapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr2, map_addr2);
 	igbuio_pci_release(&udev->info, NULL);
 
 	sysfs_remove_group(&dev->dev.kobj, &dev_attr_grp);
