@@ -519,13 +519,6 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	/* enable bus mastering on the device */
 	pci_set_master(dev);
 
-	/* enable interrupts */
-	err = igbuio_pci_enable_interrupts(udev);
-	if (err) {
-		atomic_dec(&udev->refcnt);
-		dev_err(&dev->dev, "Enable interrupt fails\n");
-	}
-
 	/*
 	 * Doing a harmless dma mapping for attaching the device to
 	 * the iommu identity mapping if kernel boots with iommu=pt.
@@ -573,9 +566,10 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 
 	/* fill uio infos */
-	udev->info.name = "igb_uio";
+	udev->info.name = "fpga_uio";
 	udev->info.version = "0.1";
 	udev->info.irqcontrol = igbuio_pci_irqcontrol;
+	udev->info.irq = UIO_IRQ_CUSTOM;
 	udev->info.open = igbuio_pci_open;
 	udev->info.release = NULL;
 	udev->info.priv = udev;
@@ -593,6 +587,13 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_remove_group;
 
 	pci_set_drvdata(dev, udev);
+
+	/* enable interrupts */
+	err = igbuio_pci_enable_interrupts(udev);
+	if (err) {
+		atomic_dec(&udev->refcnt);
+		dev_err(&dev->dev, "Enable interrupt fails\n");
+	}
 
 	return 0;
 
@@ -651,7 +652,7 @@ igbuio_config_intr_mode(char *intr_str)
 }
 
 static struct pci_driver igbuio_pci_driver = {
-	.name = "igb_uio",
+	.name = "fpga_uio",
 	.id_table = NULL,
 	.probe = igbuio_pci_probe,
 	.remove = igbuio_pci_remove,
