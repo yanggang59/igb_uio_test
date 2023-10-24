@@ -52,7 +52,7 @@ struct rte_uio_pci_dev {
 
 static int wc_activate;
 static char *intr_mode;
-static enum rte_intr_mode igbuio_intr_mode_preferred = RTE_INTR_MODE_MSIX;
+static enum rte_intr_mode igbuio_intr_mode_preferred = RTE_INTR_MODE_MSI;
 /* sriov sysfs */
 static ssize_t
 show_max_vfs(struct device *dev, struct device_attribute *attr,
@@ -314,6 +314,7 @@ igbuio_pci_enable_interrupts(struct rte_uio_pci_dev *udev)
 static void
 igbuio_pci_disable_interrupts(struct rte_uio_pci_dev *udev)
 {
+	printk("[Info] igbuio_pci_disable_interrupts \r\n");
 	if (udev->info.irq) {
 		free_irq(udev->info.irq, udev);
 		udev->info.irq = 0;
@@ -342,9 +343,10 @@ igbuio_pci_open(struct uio_info *info, struct inode *inode)
 	struct pci_dev *dev = udev->pdev;
 	int err;
 
+	printk(" igbuio_pci_open, irq = %ld \r\n", info->irq);
 	if (atomic_inc_return(&udev->refcnt) != 1)
 		return 0;
-
+#if 0
 	/* set bus master, which was cleared by the reset function */
 	pci_set_master(dev);
 
@@ -355,6 +357,8 @@ igbuio_pci_open(struct uio_info *info, struct inode *inode)
 		dev_err(&dev->dev, "Enable interrupt fails\n");
 	}
 	return err;
+#endif
+	return 0;
 }
 
 static int
@@ -515,6 +519,13 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	/* enable bus mastering on the device */
 	pci_set_master(dev);
 
+	/* enable interrupts */
+	err = igbuio_pci_enable_interrupts(udev);
+	if (err) {
+		atomic_dec(&udev->refcnt);
+		dev_err(&dev->dev, "Enable interrupt fails\n");
+	}
+
 	/*
 	 * Doing a harmless dma mapping for attaching the device to
 	 * the iommu identity mapping if kernel boots with iommu=pt.
@@ -566,7 +577,7 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	udev->info.version = "0.1";
 	udev->info.irqcontrol = igbuio_pci_irqcontrol;
 	udev->info.open = igbuio_pci_open;
-	udev->info.release = igbuio_pci_release;
+	udev->info.release = NULL;
 	udev->info.priv = udev;
 	udev->pdev = dev;
 	atomic_set(&udev->refcnt, 0);
@@ -576,6 +587,7 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_release_iomem;
 
 	/* register uio driver */
+	printk(" uio_register_device, irq = %ld \r\n", udev->info.irq);
 	err = uio_register_device(&dev->dev, &udev->info);
 	if (err != 0)
 		goto fail_remove_group;
