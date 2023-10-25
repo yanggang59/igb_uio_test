@@ -216,6 +216,8 @@ igbuio_pci_irqhandler(int irq, void *dev_id)
 	struct rte_uio_pci_dev *udev = (struct rte_uio_pci_dev *)dev_id;
 	struct uio_info *info = &udev->info;
 
+	printk("IRQ happend, irq = %d , udev->mode = %d \r\n", irq, udev->mode);
+	
 	/* Legacy mode need to mask in hardware */
 	if (udev->mode == RTE_INTR_MODE_LEGACY &&
 	    !pci_check_and_mask_intx(udev->pdev))
@@ -223,7 +225,7 @@ igbuio_pci_irqhandler(int irq, void *dev_id)
 
 	uio_event_notify(info);
 
-	printk("IRQ happend, irq = %d \r\n", irq);
+	printk("Notify done, irq = %d \r\n", irq);
 
 	/* Message signal mode, no share IRQ and automasked */
 	return IRQ_HANDLED;
@@ -233,6 +235,8 @@ static int
 igbuio_pci_enable_interrupts(struct rte_uio_pci_dev *udev)
 {
 	int err = 0;
+	int nvec = 0;
+	int i = 0;
 #ifndef HAVE_ALLOC_IRQ_VECTORS
 	struct msix_entry msix_entry;
 #endif
@@ -270,7 +274,12 @@ igbuio_pci_enable_interrupts(struct rte_uio_pci_dev *udev)
 			break;
 		}
 #else
-		if (pci_alloc_irq_vectors(udev->pdev, 1, 1, PCI_IRQ_MSI) == 1) {
+		nvec = pci_msi_vec_count(udev->pdev);
+		printk("[DEBUG] igbuio_pci_enable_interrupts , nvec = %d \r\n",nvec);
+		if (nvec < 0) {
+			nvec = 1;
+		}
+		if (pci_alloc_irq_vectors(udev->pdev, 1, nvec, PCI_IRQ_MSI) == nvec) {
 			dev_dbg(&udev->pdev->dev, "using MSI");
 			udev->info.irq_flags = IRQF_NO_THREAD;
 			udev->info.irq = pci_irq_vector(udev->pdev, 0);
@@ -300,14 +309,22 @@ igbuio_pci_enable_interrupts(struct rte_uio_pci_dev *udev)
 		udev->info.irq = UIO_IRQ_NONE;
 		err = -EINVAL;
 	}
-
+#if 0
 	if (udev->info.irq != UIO_IRQ_NONE)
 		err = request_irq(udev->info.irq, igbuio_pci_irqhandler,
 				  udev->info.irq_flags, udev->info.name,
 				  udev);
 	dev_info(&udev->pdev->dev, "uio device registered with irq %ld\n",
 		 udev->info.irq);
-
+#endif
+	if (udev->info.irq != UIO_IRQ_NONE) {
+		for (i = 0; i < nvec; i++) {
+			printk("[DEBUG] register irq_handler for irq : %d , udev->mode = %d \r\n", pci_irq_vector(udev->pdev, i), udev->mode);
+			err = request_irq(pci_irq_vector(udev->pdev, i), igbuio_pci_irqhandler,
+				  udev->info.irq_flags, udev->info.name,
+				  udev);
+		}
+	}
 	return err;
 }
 
@@ -341,9 +358,8 @@ igbuio_pci_open(struct uio_info *info, struct inode *inode)
 {
 	struct rte_uio_pci_dev *udev = info->priv;
 	struct pci_dev *dev = udev->pdev;
-	int err;
+	//int err;
 
-	printk(" igbuio_pci_open, irq = %ld \r\n", info->irq);
 	if (atomic_inc_return(&udev->refcnt) != 1)
 		return 0;
 #if 0
@@ -581,7 +597,6 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_release_iomem;
 
 	/* register uio driver */
-	printk(" uio_register_device, irq = %ld \r\n", udev->info.irq);
 	err = uio_register_device(&dev->dev, &udev->info);
 	if (err != 0)
 		goto fail_remove_group;
@@ -630,7 +645,7 @@ static int
 igbuio_config_intr_mode(char *intr_str)
 {
 	if (!intr_str) {
-		pr_info("Use MSIX interrupt by default\n");
+		pr_info("Use MSI interrupt by default\n");
 		return 0;
 	}
 
