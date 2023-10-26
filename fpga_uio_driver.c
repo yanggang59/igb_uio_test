@@ -48,6 +48,7 @@ struct rte_uio_pci_dev {
 	struct pci_dev *pdev;
 	enum rte_intr_mode mode;
 	atomic_t refcnt;
+	int irq_cnt;
 };
 
 static int wc_activate;
@@ -282,7 +283,7 @@ igbuio_pci_enable_interrupts(struct rte_uio_pci_dev *udev)
 		if (pci_alloc_irq_vectors(udev->pdev, 1, nvec, PCI_IRQ_MSI) == nvec) {
 			dev_dbg(&udev->pdev->dev, "using MSI");
 			udev->info.irq_flags = IRQF_NO_THREAD;
-			udev->info.irq = pci_irq_vector(udev->pdev, 0);
+			//udev->info.irq = pci_irq_vector(udev->pdev, 0);
 			udev->mode = RTE_INTR_MODE_MSI;
 			break;
 		}
@@ -317,24 +318,30 @@ igbuio_pci_enable_interrupts(struct rte_uio_pci_dev *udev)
 	dev_info(&udev->pdev->dev, "uio device registered with irq %ld\n",
 		 udev->info.irq);
 #endif
-	if (udev->info.irq != UIO_IRQ_NONE) {
-		for (i = 0; i < nvec; i++) {
-			printk("[DEBUG] register irq_handler for irq : %d , udev->mode = %d \r\n", pci_irq_vector(udev->pdev, i), udev->mode);
-			err = request_irq(pci_irq_vector(udev->pdev, i), igbuio_pci_irqhandler,
-				  udev->info.irq_flags, udev->info.name,
-				  udev);
-		}
+	for (i = 0; i < nvec; i++) {
+		printk("[DEBUG] register irq_handler for irq : %d , udev->mode = %d \r\n", pci_irq_vector(udev->pdev, i), udev->mode);
+		err = request_irq(pci_irq_vector(udev->pdev, i), igbuio_pci_irqhandler,
+				udev->info.irq_flags, udev->info.name,
+				udev);
 	}
+	udev->irq_cnt = nvec;
 	return err;
 }
 
 static void
 igbuio_pci_disable_interrupts(struct rte_uio_pci_dev *udev)
 {
-	printk("[Info] igbuio_pci_disable_interrupts \r\n");
-	if (udev->info.irq) {
+	int i;
+	printk("[Info] igbuio_pci_disable_interrupts In , udev->info.irq = %d \r\n", udev->info.irq);
+	if (udev->info.irq && udev->info.irq != UIO_IRQ_CUSTOM) {
 		free_irq(udev->info.irq, udev);
 		udev->info.irq = 0;
+	} 
+	
+	if(udev->mode == RTE_INTR_MODE_MSIX || udev->mode == RTE_INTR_MODE_MSI){
+		for(i = 0; i < udev->irq_cnt; i++) {
+			pci_free_irq(udev->pdev, i, udev);
+		}
 	}
 
 #ifndef HAVE_ALLOC_IRQ_VECTORS
@@ -347,6 +354,7 @@ igbuio_pci_disable_interrupts(struct rte_uio_pci_dev *udev)
 	    udev->mode == RTE_INTR_MODE_MSI)
 		pci_free_irq_vectors(udev->pdev);
 #endif
+	printk("[Info] igbuio_pci_disable_interrupts Out \r\n");
 }
 
 
@@ -360,8 +368,6 @@ igbuio_pci_open(struct uio_info *info, struct inode *inode)
 	struct pci_dev *dev = udev->pdev;
 	//int err;
 
-	if (atomic_inc_return(&udev->refcnt) != 1)
-		return 0;
 #if 0
 	/* set bus master, which was cleared by the reset function */
 	pci_set_master(dev);
@@ -382,6 +388,8 @@ igbuio_pci_release(struct uio_info *info, struct inode *inode)
 {
 	struct rte_uio_pci_dev *udev = info->priv;
 	struct pci_dev *dev = udev->pdev;
+
+	printk("[DEBUG] igbuio_pci_release , udev->refcnt = %d \r\n", udev->refcnt);
 
 	if (atomic_dec_and_test(&udev->refcnt)) {
 		/* disable interrupts */
@@ -602,6 +610,9 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_remove_group;
 
 	pci_set_drvdata(dev, udev);
+
+	if (atomic_inc_return(&udev->refcnt) != 1)
+		return 0;
 
 	/* enable interrupts */
 	err = igbuio_pci_enable_interrupts(udev);
