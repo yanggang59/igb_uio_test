@@ -33,6 +33,7 @@ enum rte_intr_mode {
 
 #include "compat.h"
 
+#define DMA_SIZE             (1024*1024)
 
 dma_addr_t map_dma_addr1;
 dma_addr_t map_dma_addr2;
@@ -517,6 +518,7 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	struct rte_uio_pci_dev *udev;
 	struct uio_info *info;
 	int err;
+	int i,j;
 
 #ifdef HAVE_PCI_IS_BRIDGE_API
 	if (pci_is_bridge(dev)) {
@@ -548,33 +550,47 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	 * the iommu identity mapping if kernel boots with iommu=pt.
 	 * Note this is not a problem if no IOMMU at all.
 	 */
-	map_addr1 = dma_alloc_coherent(&dev->dev, 1024, &map_dma_addr1, GFP_KERNEL);
-	if (map_addr1)
-		memset(map_addr1, 'A', 1024);
+	map_addr1 = dma_alloc_coherent(&dev->dev, DMA_SIZE, &map_dma_addr1, GFP_KERNEL);
+	if (map_addr1) {
+#if 1
+		for(i = 1; i <= DMA_SIZE; i++) {
+			*((char*) map_addr1 + i) = i & 0x7F;
+		}
+#else
+		memset(map_addr1, 'A', DMA_SIZE);
+#endif
+	}
 
-	map_addr2 = dma_alloc_coherent(&dev->dev, 1024, &map_dma_addr2, GFP_KERNEL);
-	if (map_addr2)
-		memset(map_addr2, 'B', 1024);
+	map_addr2 = dma_alloc_coherent(&dev->dev, DMA_SIZE, &map_dma_addr2, GFP_KERNEL);
+	if (map_addr2) {
+#if 1
+		for(j = 1; j <= DMA_SIZE; j++) {
+			*((char*) map_addr2 + j) = (DMA_SIZE - j) & 0x7F;
+		}
+#else
+		memset(map_addr2, 'B', DMA_SIZE);
+#endif
+	}
 
 	if ((!map_addr1) || (!map_addr2))
 		dev_info(&dev->dev, "dma mapping failed\n");
 	else {
-		dev_info(&dev->dev, "mapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr1, map_addr1);
-		dev_info(&dev->dev, "mapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr2, map_addr2);
-		//dma_free_coherent(&dev->dev, 1024, map_addr, map_dma_addr);
-		//dev_info(&dev->dev, "unmapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr, map_addr);
+		dev_info(&dev->dev, "mapping 4K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr1, map_addr1);
+		dev_info(&dev->dev, "mapping 4K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr2, map_addr2);
+		//dma_free_coherent(&dev->dev, 4096, map_addr, map_dma_addr);
+		//dev_info(&dev->dev, "unmapping 4K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr, map_addr);
 	}
 
 	info->mem[2].name = "DMA0";
 	info->mem[2].addr = map_addr1;
 	info->mem[2].internal_addr = NULL;
-	info->mem[2].size = 1024;
+	info->mem[2].size = DMA_SIZE;
 	info->mem[2].memtype = UIO_MEM_VIRTUAL;
 
 	info->mem[3].name = "DMA1";
 	info->mem[3].addr = map_addr2;
 	info->mem[3].internal_addr = NULL;
-	info->mem[3].size = 1024;
+	info->mem[3].size = DMA_SIZE;
 	info->mem[3].memtype = UIO_MEM_VIRTUAL;
 
 	/* remap IO memory */
@@ -638,10 +654,10 @@ static void
 igbuio_pci_remove(struct pci_dev *dev)
 {
 	struct rte_uio_pci_dev *udev = pci_get_drvdata(dev);
-	dma_free_coherent(&dev->dev, 1024, map_addr1, map_dma_addr1);
-	dev_info(&dev->dev, "unmapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr1, map_addr1);
-	dma_free_coherent(&dev->dev, 1024, map_addr2, map_dma_addr2);
-	dev_info(&dev->dev, "unmapping 1K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr2, map_addr2);
+	dma_free_coherent(&dev->dev, 4096, map_addr1, map_dma_addr1);
+	dev_info(&dev->dev, "unmapping 4K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr1, map_addr1);
+	dma_free_coherent(&dev->dev, 4096, map_addr2, map_dma_addr2);
+	dev_info(&dev->dev, "unmapping 4K dma=%#llx host=%p\n", (unsigned long long)map_dma_addr2, map_addr2);
 	igbuio_pci_release(&udev->info, NULL);
 
 	sysfs_remove_group(&dev->dev.kobj, &dev_attr_grp);
