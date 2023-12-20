@@ -15,6 +15,13 @@
 #include <linux/version.h>
 #include <linux/slab.h>
 
+#define DEBUG_CHRDEV              1
+#if DEBUG_CHRDEV
+#include "debug.h"
+struct debug_cdev debug_cdev;
+#endif
+
+
 /**
  * These enum and macro definitions are copied from the
  * file rte_pci_dev_features.h
@@ -333,7 +340,7 @@ static void
 igbuio_pci_disable_interrupts(struct rte_uio_pci_dev *udev)
 {
 	int i;
-	printk("[Info] igbuio_pci_disable_interrupts In , udev->info.irq = %d \r\n", udev->info.irq);
+	printk("[Info] igbuio_pci_disable_interrupts In ,udev->info.irq = %ld \r\n", udev->info.irq);
 	if (udev->info.irq && udev->info.irq != UIO_IRQ_CUSTOM) {
 		free_irq(udev->info.irq, udev);
 		udev->info.irq = 0;
@@ -365,11 +372,11 @@ igbuio_pci_disable_interrupts(struct rte_uio_pci_dev *udev)
 static int
 igbuio_pci_open(struct uio_info *info, struct inode *inode)
 {
+#if 0
 	struct rte_uio_pci_dev *udev = info->priv;
 	struct pci_dev *dev = udev->pdev;
 	//int err;
 
-#if 0
 	/* set bus master, which was cleared by the reset function */
 	pci_set_master(dev);
 
@@ -389,8 +396,6 @@ igbuio_pci_release(struct uio_info *info, struct inode *inode)
 {
 	struct rte_uio_pci_dev *udev = info->priv;
 	struct pci_dev *dev = udev->pdev;
-
-	printk("[DEBUG] igbuio_pci_release , udev->refcnt = %d \r\n", udev->refcnt);
 
 	if (atomic_dec_and_test(&udev->refcnt)) {
 		/* disable interrupts */
@@ -582,13 +587,13 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 
 	info->mem[2].name = "DMA0";
-	info->mem[2].addr = map_addr1;
+	info->mem[2].addr = (phys_addr_t)map_addr1;
 	info->mem[2].internal_addr = NULL;
 	info->mem[2].size = DMA_SIZE;
 	info->mem[2].memtype = UIO_MEM_VIRTUAL;
 
 	info->mem[3].name = "DMA1";
-	info->mem[3].addr = map_addr2;
+	info->mem[3].addr = (phys_addr_t)map_addr2;
 	info->mem[3].internal_addr = NULL;
 	info->mem[3].size = DMA_SIZE;
 	info->mem[3].memtype = UIO_MEM_VIRTUAL;
@@ -637,6 +642,14 @@ igbuio_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		dev_err(&dev->dev, "Enable interrupt fails\n");
 	}
 
+#if DEBUG_CHRDEV
+	printk("[Info] prepare debug chardev \r\n");
+	memset(&debug_cdev, 0, sizeof(struct debug_cdev));
+	create_debug_cdev(&debug_cdev);
+	memcpy(debug_cdev.buf, &map_addr1, 8);
+	memcpy(debug_cdev.buf + 8, &map_addr2, 8);
+#endif
+
 	return 0;
 
 fail_remove_group:
@@ -666,6 +679,9 @@ igbuio_pci_remove(struct pci_dev *dev)
 	pci_disable_device(dev);
 	pci_set_drvdata(dev, NULL);
 	kfree(udev);
+#if DEBUG_CHRDEV
+	delete_debug_cdev(&debug_cdev);
+#endif
 }
 
 static int
